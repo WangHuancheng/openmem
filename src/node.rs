@@ -6,6 +6,7 @@ use crate::error::{OpenMemError, Result};
 /// Read a node's content by exact path (relative to vault root).
 /// The path should NOT include the `.md` extension.
 pub fn read(vault: &Path, node_path: &str) -> Result<String> {
+    validate_path(vault, node_path)?;
     let file_path = resolve_path(vault, node_path);
     fs::read_to_string(&file_path).map_err(|e| {
         if e.kind() == std::io::ErrorKind::NotFound {
@@ -19,6 +20,7 @@ pub fn read(vault: &Path, node_path: &str) -> Result<String> {
 /// Write content to a node. Creates parent dirs if needed.
 /// The path should NOT include the `.md` extension.
 pub fn write(vault: &Path, node_path: &str, content: &str) -> Result<()> {
+    validate_path(vault, node_path)?;
     let file_path = resolve_path(vault, node_path);
     if let Some(parent) = file_path.parent() {
         fs::create_dir_all(parent)?;
@@ -29,6 +31,7 @@ pub fn write(vault: &Path, node_path: &str, content: &str) -> Result<()> {
 
 /// Delete a node by exact path.
 pub fn delete(vault: &Path, node_path: &str) -> Result<()> {
+    validate_path(vault, node_path)?;
     let file_path = resolve_path(vault, node_path);
     if !file_path.exists() {
         return Err(OpenMemError::NodeNotFound(node_path.to_string()));
@@ -46,7 +49,7 @@ pub fn list(vault: &Path, prefix: &str) -> Result<Vec<String>> {
         vault.join(prefix)
     };
 
-    if !search_dir.exists() {
+    if !search_dir.exists() || !search_dir.is_dir() {
         return Ok(Vec::new());
     }
 
@@ -77,8 +80,24 @@ fn collect_nodes(dir: &Path, vault_root: &Path, nodes: &mut Vec<String>) -> Resu
 }
 
 /// Convert a node path to an actual file path.
+/// Validates that the resolved path stays within the vault (no ../ escape).
 fn resolve_path(vault: &Path, node_path: &str) -> PathBuf {
     vault.join(format!("{}.md", node_path))
+}
+
+/// Validate that a node path does not escape the vault root.
+/// Rejects paths containing ".." components.
+fn validate_path(_vault: &Path, node_path: &str) -> Result<()> {
+    let has_traversal = node_path
+        .split(['/', '\\'])
+        .any(|component| component == "..");
+    if has_traversal {
+        return Err(OpenMemError::NodeNotFound(format!(
+            "path escapes vault: {}",
+            node_path
+        )));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -329,5 +348,36 @@ pub enum AppError {
         let vault = temp_vault();
         let result = list(&vault, "").unwrap();
         assert!(result.is_empty());
+    }
+
+    #[test]
+    fn list_file_as_prefix_returns_empty() {
+        let vault = temp_vault();
+        write(&vault, "global/prefs", "content").unwrap();
+        // "global/prefs" resolves to a .md file, not a directory
+        let result = list(&vault, "global/prefs.md").unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn path_traversal_read_is_rejected() {
+        let vault = temp_vault();
+        write(&vault, "legit", "safe").unwrap();
+        let result = read(&vault, "../../../etc/passwd");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn path_traversal_write_is_rejected() {
+        let vault = temp_vault();
+        let result = write(&vault, "../../../tmp/evil", "bad");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn path_traversal_delete_is_rejected() {
+        let vault = temp_vault();
+        let result = delete(&vault, "../../../tmp/evil");
+        assert!(result.is_err());
     }
 }
