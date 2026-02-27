@@ -7,3 +7,4 @@ edition = "2024"
 thiserror = "2"
 regex = "1"
 dirs = "6"
+clap = { version = "4", features = ["derive"] }

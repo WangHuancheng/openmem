@@ -47,12 +47,22 @@ mod tests {
     use std::env;
     use std::fs;
     use std::sync::atomic::{AtomicU32, Ordering};
+    use std::time::SystemTime;
 
     static TEST_COUNTER: AtomicU32 = AtomicU32::new(0);
 
     fn temp_vault() -> std::path::PathBuf {
         let id = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
-        let dir = env::temp_dir().join(format!("openmem_link_test_{}_{}", std::process::id(), id));
+        let nanos = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = env::temp_dir().join(format!(
+            "openmem_link_test_{}_{}_{}",
+            std::process::id(),
+            id,
+            nanos
+        ));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir
