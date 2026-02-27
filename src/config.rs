@@ -2,7 +2,7 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::error::{OpenMemError, Result};
+use crate::error::Result;
 
 /// User configuration for openmem.
 #[derive(Debug)]
