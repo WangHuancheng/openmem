@@ -3,6 +3,7 @@ mod config;
 mod error;
 mod link;
 mod node;
+mod structured;
 mod vault;
 mod vcs;
 

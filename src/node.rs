@@ -2,6 +2,54 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::error::{OpenMemError, Result};
+use crate::structured;
+
+/// Split a full node path into (file_path, optional heading_path).
+///
+/// `"global/user-prefs#Stack/Frontend"` → `("global/user-prefs", Some("Stack/Frontend"))`
+/// `"global/user-prefs"` → `("global/user-prefs", None)`
+pub fn split_node_path(path: &str) -> (&str, Option<&str>) {
+    match path.split_once('#') {
+        Some((file_path, heading_path)) => (file_path, Some(heading_path)),
+        None => (path, None),
+    }
+}
+
+/// Read a sub-section of a node by heading path.
+///
+/// Path format: `"file/path#Heading/SubHeading"`
+///
+/// If the path contains `#`, the file is parsed into a structured node tree,
+/// the heading path is resolved, and only that sub-tree is rendered back to markdown.
+/// If there is no `#`, this behaves identically to `read()`.
+pub fn read_section(vault: &Path, full_path: &str) -> Result<String> {
+    let (file_path, heading_path) = split_node_path(full_path);
+
+    let content = read(vault, file_path)?;
+
+    match heading_path {
+        None => Ok(content),
+        Some(hp) => {
+            let tree = structured::parse(file_path, &content);
+            match structured::find(&tree, hp) {
+                Some(sub_node) => Ok(structured::render(sub_node)),
+                None => Err(OpenMemError::NodeNotFound(format!(
+                    "heading not found: {}#{}",
+                    file_path, hp
+                ))),
+            }
+        }
+    }
+}
+
+/// Read the outline (heading tree) of a node.
+///
+/// Returns a list of `(level, heading_name)` pairs.
+pub fn outline(vault: &Path, node_path: &str) -> Result<Vec<(u8, String)>> {
+    let content = read(vault, node_path)?;
+    let tree = structured::parse(node_path, &content);
+    Ok(structured::outline(&tree))
+}
 
 /// Read a node's content by exact path (relative to vault root).
 /// The path should NOT include the `.md` extension.
@@ -389,5 +437,74 @@ pub enum AppError {
         let vault = temp_vault();
         let result = delete(&vault, "../../../tmp/evil");
         assert!(result.is_err());
+    }
+
+    // ==========================================
+    // Structured node tests
+    // ==========================================
+
+    #[test]
+    fn split_path_with_hash() {
+        let (file, heading) = split_node_path("global/user-prefs#Stack/Frontend");
+        assert_eq!(file, "global/user-prefs");
+        assert_eq!(heading, Some("Stack/Frontend"));
+    }
+
+    #[test]
+    fn split_path_without_hash() {
+        let (file, heading) = split_node_path("global/user-prefs");
+        assert_eq!(file, "global/user-prefs");
+        assert!(heading.is_none());
+    }
+
+    #[test]
+    fn read_section_no_hash_returns_full_content() {
+        let vault = temp_vault();
+        write(&vault, "test-node", "# Title\n\nBody text.").unwrap();
+        let content = read_section(&vault, "test-node").unwrap();
+        assert_eq!(content, "# Title\n\nBody text.");
+    }
+
+    #[test]
+    fn read_section_top_level_heading() {
+        let vault = temp_vault();
+        let md = "# Overview\n\nOverview text.\n\n# Stack\n\n- React\n- Rust\n";
+        write(&vault, "project", md).unwrap();
+        let section = read_section(&vault, "project#Stack").unwrap();
+        assert!(section.contains("# Stack"));
+        assert!(section.contains("- React"));
+        assert!(!section.contains("Overview"));
+    }
+
+    #[test]
+    fn read_section_nested_heading() {
+        let vault = temp_vault();
+        let md = "# Project\n\n## Stack\n\n### Frontend\n\nReact details.\n\n### Backend\n\nRust details.\n";
+        write(&vault, "acme", md).unwrap();
+        let section = read_section(&vault, "acme#Project/Stack/Frontend").unwrap();
+        assert!(section.contains("Frontend"));
+        assert!(section.contains("React details."));
+        assert!(!section.contains("Backend"));
+    }
+
+    #[test]
+    fn read_section_not_found() {
+        let vault = temp_vault();
+        write(&vault, "simple", "# Only\n\nOne heading.").unwrap();
+        let err = read_section(&vault, "simple#Missing").unwrap_err();
+        assert!(matches!(err, crate::error::OpenMemError::NodeNotFound(_)));
+        assert!(err.to_string().contains("heading not found"));
+    }
+
+    #[test]
+    fn outline_returns_heading_tree() {
+        let vault = temp_vault();
+        let md = "# First\n\n## Nested\n\n# Second\n";
+        write(&vault, "doc", md).unwrap();
+        let items = outline(&vault, "doc").unwrap();
+        assert_eq!(items[0], (0, "doc".to_string()));
+        assert_eq!(items[1], (1, "First".to_string()));
+        assert_eq!(items[2], (2, "Nested".to_string()));
+        assert_eq!(items[3], (1, "Second".to_string()));
     }
 }

@@ -37,6 +37,11 @@ pub enum Commands {
         /// Node path
         path: String,
     },
+    /// Show heading outline of a node
+    Outline {
+        /// Node path
+        path: String,
+    },
     /// Delete a node
     Delete {
         /// Node path
@@ -63,7 +68,8 @@ pub fn execute(cli: &Cli) -> crate::error::Result<String> {
         }
         Commands::Read { path } => {
             let vault = crate::vault::ensure(&vault_path)?;
-            let content = crate::node::read(&vault, path)?;
+            // If path contains #, read just that heading section
+            let content = crate::node::read_section(&vault, path)?;
             Ok(content)
         }
         Commands::Write { path } => {
@@ -108,6 +114,16 @@ pub fn execute(cli: &Cli) -> crate::error::Result<String> {
                 for link in &incoming {
                     output.push_str(&format!("  ← {}\n", link));
                 }
+            }
+            Ok(output)
+        }
+        Commands::Outline { path } => {
+            let vault = crate::vault::ensure(&vault_path)?;
+            let items = crate::node::outline(&vault, path)?;
+            let mut output = String::new();
+            for (level, name) in &items {
+                let indent = "  ".repeat(*level as usize);
+                output.push_str(&format!("{}{}\n", indent, name));
             }
             Ok(output)
         }
@@ -196,5 +212,19 @@ mod tests {
         // "read" requires a path argument
         let result = Cli::try_parse_from(["openmem", "read"]);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_outline_command() {
+        let cli = Cli::parse_from(["openmem", "outline", "global/user-prefs"]);
+        assert!(matches!(cli.command, Commands::Outline { path } if path == "global/user-prefs"));
+    }
+
+    #[test]
+    fn parse_read_with_hash_path() {
+        let cli = Cli::parse_from(["openmem", "read", "global/user-prefs#Stack"]);
+        assert!(
+            matches!(cli.command, Commands::Read { path } if path == "global/user-prefs#Stack")
+        );
     }
 }
